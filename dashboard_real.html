@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Solum · Monitoreo Satelital</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+<style>
+  :root{
+    --bg: #F5F3EC;
+    --panel: #FFFFFF;
+    --ink: #1B2A1E;
+    --ink-soft: #5B6A5D;
+    --forest: #23402A;
+    --forest-deep: #16281B;
+    --moss: #6E9B5E;
+    --sage: #B8CDA8;
+    --clay: #C97A4A;
+    --line: #E2DFD2;
+    --amber: #D9A441;
+    --teal: #3E8483;
+    plum: #8A5A6B;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:var(--bg);
+    color:var(--ink);
+    font-family:'Space Grotesk', sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .mock-badge{
+    position:fixed; top:14px; right:14px; z-index:50;
+    background:var(--forest-deep); color:#EFE9D8;
+    font-family:'JetBrains Mono',monospace; font-size:11px; letter-spacing:.08em;
+    padding:6px 12px; border-radius:100px; text-transform:uppercase;
+    box-shadow:0 4px 14px rgba(0,0,0,.25);
+  }
+  header{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:22px 32px 0 32px;
+  }
+  .brand{display:flex; align-items:center; gap:12px;}
+  .brand-mark{
+    width:36px; height:36px; border-radius:9px;
+    background:linear-gradient(155deg, var(--moss), var(--forest));
+    position:relative; flex-shrink:0;
+  }
+  .brand-mark::after{
+    content:""; position:absolute; inset:8px;
+    border:1.5px solid rgba(255,255,255,.75); border-radius:4px;
+    clip-path: polygon(0 100%, 100% 100%, 100% 40%, 55% 0, 0 55%);
+  }
+  .brand-name{font-family:'Fraunces', serif; font-size:21px; font-weight:600; letter-spacing:-.01em;}
+  .brand-sub{font-size:11px; color:var(--ink-soft); font-family:'JetBrains Mono',monospace; letter-spacing:.04em; margin-top:1px;}
+
+  nav.tabs{display:flex; gap:4px; margin-top:26px;}
+  nav.tabs button{
+    font-family:'Space Grotesk', sans-serif; font-size:14px; font-weight:500;
+    background:none; border:none; padding:10px 4px; margin-right:26px;
+    color:var(--ink-soft); cursor:pointer; position:relative; border-bottom:2px solid transparent;
+    transition:color .15s;
+  }
+  nav.tabs button.active{color:var(--forest-deep); border-bottom:2px solid var(--forest);}
+  nav.tabs button:hover{color:var(--forest-deep);}
+  hr.divider{border:none; border-top:1px solid var(--line); margin:0 32px;}
+
+  .filterbar{
+    display:flex; gap:10px; flex-wrap:wrap;
+    padding:18px 32px 0 32px;
+  }
+  .chip{
+    background:var(--forest); color:#fff; font-size:12.5px; font-weight:500;
+    padding:8px 14px; border-radius:8px; display:flex; align-items:center; gap:8px;
+    font-family:'Space Grotesk',sans-serif;
+  }
+  .chip.ghost{background:#fff; color:var(--ink); border:1px solid var(--line);}
+  .chip .caret{opacity:.7; font-size:10px;}
+
+  .layout{
+    display:grid; grid-template-columns:230px 1fr; gap:22px;
+    padding:20px 32px 40px 32px;
+  }
+  .sidebar-block{
+    background:var(--panel); border:1px solid var(--line); border-radius:12px;
+    padding:14px; margin-bottom:16px;
+  }
+  .sidebar-block h4{
+    margin:0 0 10px 0; font-size:11px; letter-spacing:.08em; text-transform:uppercase;
+    color:var(--ink-soft); font-family:'JetBrains Mono',monospace; font-weight:500;
+  }
+  .check-row{
+    display:flex; align-items:center; gap:9px; padding:6px 4px; border-radius:6px;
+    font-size:13.5px; cursor:pointer; transition:background .12s;
+  }
+  .check-row:hover{background:#F2F0E5;}
+  .check-row input{accent-color:var(--forest); width:15px; height:15px; cursor:pointer;}
+  .dot{width:9px; height:9px; border-radius:50%; flex-shrink:0;}
+
+  .main-grid{display:grid; grid-template-columns:1.35fr 1fr; gap:18px;}
+  .card{
+    background:var(--panel); border:1px solid var(--line); border-radius:14px;
+    padding:18px 18px 10px 18px;
+  }
+  .card h3{
+    margin:0 0 2px 0; font-family:'Fraunces', serif; font-size:15.5px; font-weight:600;
+  }
+  .card .meta{font-size:11px; color:var(--ink-soft); font-family:'JetBrains Mono',monospace; margin-bottom:10px;}
+  canvas{max-height:230px;}
+
+  table{width:100%; border-collapse:collapse; font-size:12.5px;}
+  thead th{
+    text-align:left; font-family:'JetBrains Mono',monospace; font-size:10.5px;
+    text-transform:uppercase; letter-spacing:.05em; color:var(--ink-soft);
+    padding:6px 8px; border-bottom:1px solid var(--line);
+  }
+  tbody td{padding:7px 8px; font-family:'JetBrains Mono',monospace; font-weight:500;}
+  tbody tr td:first-child{font-family:'Space Grotesk',sans-serif; font-weight:600;}
+  .heat{color:#fff; border-radius:4px; text-align:center;}
+
+  footer.note{
+    padding:0 32px 32px 32px; font-size:12px; color:var(--ink-soft); font-family:'JetBrains Mono',monospace;
+    display:flex; align-items:center; gap:8px;
+  }
+  footer.note::before{content:"◆"; color:var(--moss);}
+
+  @media (max-width:880px){
+    .layout{grid-template-columns:1fr;}
+    .main-grid{grid-template-columns:1fr;}
+  }
+</style>
+</head>
+<body>
+
+<div class="mock-badge" id="statusBadge">Conectando…</div>
+
+<!-- PANTALLA DE LOGIN -->
+<div id="loginScreen" style="
+  position:fixed; inset:0; background:var(--bg); z-index:100;
+  display:flex; align-items:center; justify-content:center;">
+  <div style="background:var(--panel); border:1px solid var(--line); border-radius:16px;
+    padding:36px 34px; width:320px; box-shadow:0 12px 32px rgba(0,0,0,.08);">
+    <div style="display:flex; align-items:center; gap:12px; margin-bottom:22px;">
+      <div class="brand-mark"></div>
+      <div>
+        <div class="brand-name" style="font-size:19px;">Solum</div>
+        <div class="brand-sub">MONITOREO SATELITAL</div>
+      </div>
+    </div>
+    <div style="font-size:13px; color:var(--ink-soft); margin-bottom:18px;">Ingresá con tu usuario y contraseña</div>
+    <input id="loginUser" type="text" placeholder="Usuario" style="
+      width:100%; padding:10px 12px; margin-bottom:10px; border-radius:8px;
+      border:1px solid var(--line); font-family:'Space Grotesk',sans-serif; font-size:14px;">
+    <input id="loginPass" type="password" placeholder="Contraseña" onkeydown="if(event.key==='Enter') intentarLogin()" style="
+      width:100%; padding:10px 12px; margin-bottom:14px; border-radius:8px;
+      border:1px solid var(--line); font-family:'Space Grotesk',sans-serif; font-size:14px;">
+    <button id="loginBtn" onclick="intentarLogin()" style="
+      width:100%; padding:11px; border:none; border-radius:8px; background:var(--forest);
+      color:#fff; font-family:'Space Grotesk',sans-serif; font-weight:600; font-size:14px; cursor:pointer;">
+      Ingresar
+    </button>
+    <div id="loginError" style="color:#8A3A3A; font-size:12.5px; margin-top:10px; min-height:16px;"></div>
+  </div>
+</div>
+
+<header>
+  <div class="brand">
+    <div class="brand-mark"></div>
+    <div>
+      <div class="brand-name">Solum</div>
+      <div class="brand-sub">MONITOREO SATELITAL · PRECISION AG</div>
+    </div>
+  </div>
+  <button onclick="cerrarSesion()" style="
+    background:none; border:1px solid var(--line); border-radius:8px; padding:8px 14px;
+    font-family:'Space Grotesk',sans-serif; font-size:12.5px; color:var(--ink-soft); cursor:pointer;">
+    Cerrar sesión
+  </button>
+</header>
+
+<div style="padding:6px 32px 0 32px; font-family:'JetBrains Mono',monospace; font-size:10.5px; color:var(--ink-soft);">
+  Fuente: Google Sheets → hoja <b>BASE_DATOS</b>
+</div>
+
+<nav class="tabs">
+  <button class="active" id="tab-entre" onclick="showView('entre')">Comparativa entre lotes</button>
+  <button id="tab-intra" onclick="showView('intra')">Comparativa intra lote</button>
+</nav>
+<hr class="divider">
+
+<div class="filterbar">
+  <div class="chip">10 sept 2023 – 24 ago 2026 <span class="caret">▾</span></div>
+  <div class="chip" id="chipEmpresa">Empresa: — <span class="caret">▾</span></div>
+  <div class="chip ghost" id="chipEstablecimiento">Establecimiento: — <span class="caret">▾</span></div>
+</div>
+
+<div class="layout">
+  <!-- SIDEBAR -->
+  <div>
+    <div class="sidebar-block" id="lote-block-entre">
+      <h4>Lote (3)</h4>
+      <label class="check-row"><input type="checkbox" checked><span class="dot" style="background:#6E9B5E"></span>MAL_8-9</label>
+      <label class="check-row"><input type="checkbox" checked><span class="dot" style="background:#D9A441"></span>MAL_7</label>
+      <label class="check-row"><input type="checkbox" checked><span class="dot" style="background:#23402A"></span>MAL_6-7</label>
+      <label class="check-row" style="opacity:.45"><input type="checkbox"><span class="dot" style="background:#C97A4A"></span>MAL_6</label>
+      <label class="check-row" style="opacity:.45"><input type="checkbox"><span class="dot" style="background:#3E8483"></span>MAL_5</label>
+    </div>
+    <div class="sidebar-block" id="lote-block-intra" style="display:none;">
+      <h4>Lote (1)</h4>
+      <label class="check-row"><input type="radio" name="loteintra" checked>MAL_8-9</label>
+      <label class="check-row" style="opacity:.55"><input type="radio" name="loteintra">MAL_7</label>
+      <label class="check-row" style="opacity:.55"><input type="radio" name="loteintra">MAL_6-7</label>
+      <label class="check-row" style="opacity:.55"><input type="radio" name="loteintra">MAL_6</label>
+    </div>
+    <div class="sidebar-block">
+      <h4>Cultivo</h4>
+      <label class="check-row"><input type="checkbox" checked><span class="dot" style="background:var(--moss)"></span>Maíz</label>
+    </div>
+  </div>
+
+  <!-- MAIN -->
+  <div>
+    <!-- VISTA: ENTRE LOTES -->
+    <div id="view-entre" class="main-grid">
+      <div class="card">
+        <h3>NDVI-LOTE</h3>
+        <div class="meta">Campaña 2023-24 · CULTIVO: Maíz</div>
+        <canvas id="chartNdviEntre"></canvas>
+      </div>
+      <div class="card">
+        <h3>CV-NDVI_LOTE</h3>
+        <div class="meta">Coeficiente de variación (%)</div>
+        <canvas id="chartCvEntre"></canvas>
+      </div>
+      <div class="card">
+        <h3>RFAa Acum-LOTE</h3>
+        <div class="meta">Radiación fotosintéticamente activa absorbida acumulada</div>
+        <canvas id="chartRfaEntre"></canvas>
+      </div>
+      <div class="card">
+        <h3>FECHA / NDVI-LOTE</h3>
+        <div class="meta">Tabla comparativa, escala de verdes</div>
+        <table id="tableHeat"></table>
+      </div>
+    </div>
+
+    <!-- VISTA: INTRA LOTE -->
+    <div id="view-intra" class="main-grid" style="display:none;">
+      <div class="card">
+        <h3>NDVI · por AMBIENTE</h3>
+        <div class="meta">LOTE: MAL_8-9 · CAMPAÑA 1 · 6 ambientes</div>
+        <canvas id="chartNdviIntra"></canvas>
+      </div>
+      <div class="card">
+        <h3>CV-NDVI · por AMBIENTE</h3>
+        <div class="meta">Coeficiente de variación (%)</div>
+        <canvas id="chartCvIntra"></canvas>
+      </div>
+      <div class="card">
+        <h3>RFAa Acumulada</h3>
+        <div class="meta">Por AMBIENTE dentro del LOTE</div>
+        <canvas id="chartRfaIntra"></canvas>
+      </div>
+      <div class="card">
+        <h3>RFAa relativo</h3>
+        <div class="meta">% respecto al ambiente de mayor RFAa</div>
+        <canvas id="chartBarIntra"></canvas>
+      </div>
+    </div>
+  </div>
+</div>
+
+<footer class="note" id="footerNote">Conectando con el backend de Google Apps Script…</footer>
+
+<script>
+Chart.defaults.font.family = "'Space Grotesk', sans-serif";
+Chart.defaults.font.size = 11;
+Chart.defaults.color = "#5B6A5D";
+
+// ⚠️ Pegá acá la URL de tu implementación de Apps Script (termina en /exec)
+const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbx8YacDOTSc0moA3o5vpfAxoHzqEb-fa9P_8pU6hCbqLS5rGkfZVpxNyb-R2X1dowu13w/exec";
+
+const palette = ["#6E9B5E","#D9A441","#23402A","#C97A4A","#3E8483","#8A5A6B","#7D8C6A","#B08968"];
+const charts = {}; // guarda instancias para poder destruir/redibujar
+
+function getToken(){
+  return localStorage.getItem('solum_token');
+}
+
+function setStatus(msg, ok){
+  const b = document.getElementById('statusBadge');
+  b.textContent = msg;
+  b.style.background = ok ? '#23402A' : '#8A3A3A';
+}
+
+function mostrarLogin(mensaje){
+  document.getElementById('loginScreen').style.display = 'flex';
+  document.getElementById('loginError').textContent = mensaje || '';
+}
+function ocultarLogin(){
+  document.getElementById('loginScreen').style.display = 'none';
+}
+
+async function intentarLogin(){
+  const usuario = document.getElementById('loginUser').value.trim();
+  const clave = document.getElementById('loginPass').value.trim();
+  const btn = document.getElementById('loginBtn');
+  if (!usuario || !clave){
+    document.getElementById('loginError').textContent = 'Completá usuario y contraseña.';
+    return;
+  }
+  btn.disabled = true; btn.textContent = 'Ingresando…';
+  try{
+    const res = await fetch(`${APPS_SCRIPT_URL}?action=login&usuario=${encodeURIComponent(usuario)}&clave=${encodeURIComponent(clave)}`);
+    const json = await res.json();
+    if (json.error || !json.token){
+      document.getElementById('loginError').textContent = json.error || 'No se pudo iniciar sesión.';
+      btn.disabled = false; btn.textContent = 'Ingresar';
+      return;
+    }
+    localStorage.setItem('solum_token', json.token);
+    ocultarLogin();
+    cargarDatos();
+  }catch(err){
+    document.getElementById('loginError').textContent = 'Error de conexión. Probá de nuevo.';
+    btn.disabled = false; btn.textContent = 'Ingresar';
+    console.error(err);
+  }
+}
+
+function cerrarSesion(){
+  localStorage.removeItem('solum_token');
+  location.reload();
+}
+
+async function cargarDatos(){
+  const token = getToken();
+  if (!token){
+    mostrarLogin();
+    return;
+  }
+  if (!APPS_SCRIPT_URL || APPS_SCRIPT_URL.includes('PEGAR_URL')){
+    setStatus('Falta configurar APPS_SCRIPT_URL', false);
+    document.getElementById('footerNote').textContent = 'Editá la constante APPS_SCRIPT_URL en el HTML con la URL de tu implementación (.../exec).';
+    return;
+  }
+
+  try{
+    const res = await fetch(`${APPS_SCRIPT_URL}?token=${encodeURIComponent(token)}`);
+    const json = await res.json();
+    if (json.error){
+      localStorage.removeItem('solum_token');
+      mostrarLogin('Tu sesión venció o no es válida. Iniciá sesión de nuevo.');
+      return;
+    }
+    ocultarLogin();
+    setStatus(`Conectado — ${json.cliente || json.empresa}`, true);
+    document.getElementById('chipEmpresa').innerHTML = `Empresa: ${json.empresa} <span class="caret">▾</span>`;
+    document.getElementById('chipEstablecimiento').innerHTML = `Establecimiento: ${json.establecimiento || 'todos'} <span class="caret">▾</span>`;
+    document.getElementById('footerNote').textContent =
+      `${json.total_filas} filas · Empresa: ${json.empresa}${json.establecimiento ? ' · Establecimiento: ' + json.establecimiento : ''}`;
+    renderTodo(json.rows);
+  }catch(err){
+    setStatus('Error de conexión', false);
+    document.getElementById('footerNote').textContent = 'No se pudo contactar al backend. Revisá que el Apps Script esté implementado con acceso "Cualquier usuario".';
+    console.error(err);
+  }
+}
+
+function fechaCorta(iso){
+  const d = new Date(iso);
+  if (isNaN(d)) return String(iso);
+  return d.toLocaleDateString('es-AR', {day:'numeric', month:'short'});
+}
+
+function agrupar(rows, campo){
+  const map = {};
+  rows.forEach(r=>{
+    const k = r[campo];
+    if (k === undefined || k === '') return;
+    if (!map[k]) map[k] = [];
+    map[k].push(r);
+  });
+  Object.values(map).forEach(arr => arr.sort((a,b)=> new Date(a['FECHA']) - new Date(b['FECHA'])));
+  return map;
+}
+
+function fechasUnicas(rows){
+  const set = new Set(rows.map(r=>r['FECHA']));
+  return Array.from(set).sort((a,b)=> new Date(a) - new Date(b));
+}
+
+function serieAlineada(fechas, filasLote, campo){
+  const porFecha = {};
+  filasLote.forEach(r=> porFecha[r['FECHA']] = r[campo]);
+  return fechas.map(f => porFecha[f] !== undefined && porFecha[f] !== '' ? Number(porFecha[f]) : null);
+}
+
+function dibujarLinea(ctx, labels, series, yTitle, key){
+  if (charts[key]) charts[key].destroy();
+  charts[key] = new Chart(ctx, {
+    type:'line',
+    data:{ labels, datasets: series.map((s,i)=>({
+      label:s.label, data:s.data, borderColor:palette[i%palette.length],
+      backgroundColor:palette[i%palette.length], pointRadius:2.5, tension:.3,
+      borderWidth:2, spanGaps:true
+    }))},
+    options:{
+      responsive:true,
+      plugins:{legend:{position:'top', align:'end', labels:{boxWidth:8, boxHeight:8, usePointStyle:true, padding:14}}},
+      scales:{ y:{title:{display:!!yTitle,text:yTitle}, grid:{color:"#EFEDE3"}}, x:{grid:{display:false}} }
+    }
+  });
+}
+
+function heatColor(v){
+  const t = Math.min(Math.max((v-0.2)/0.6,0),1);
+  const r = Math.round(216 - t*140), g = Math.round(224 - t*70), b = Math.round(205 - t*140);
+  return `rgb(${r},${Math.max(g,110)},${b})`;
+}
+
+function pintarSidebar(id, nombres){
+  const el = document.getElementById(id);
+  const existing = el.querySelector('h4');
+  el.innerHTML = '';
+  el.appendChild(existing || Object.assign(document.createElement('h4'), {textContent:'Lote'}));
+  nombres.forEach((n,i)=>{
+    const row = document.createElement('label');
+    row.className = 'check-row';
+    row.innerHTML = `<input type="checkbox" checked><span class="dot" style="background:${palette[i%palette.length]}"></span>${n}`;
+    el.appendChild(row);
+  });
+}
+
+function renderTodo(rows){
+  if (!rows || !rows.length){
+    document.getElementById('footerNote').textContent = 'No hay filas para este cliente en BASE_DATOS.';
+    return;
+  }
+
+  // ---------- VISTA ENTRE LOTES ----------
+  const porLote = agrupar(rows, 'LOTE');
+  const lotes = Object.keys(porLote);
+  const fechasLote = fechasUnicas(rows);
+  const labelsLote = fechasLote.map(fechaCorta);
+
+  pintarSidebar('lote-block-entre', lotes);
+
+  dibujarLinea(document.getElementById('chartNdviEntre'), labelsLote,
+    lotes.map(l => ({label:l, data: serieAlineada(fechasLote, porLote[l], 'NDVI-LOTE')})), 'NDVI', 'ndviEntre');
+
+  dibujarLinea(document.getElementById('chartCvEntre'), labelsLote,
+    lotes.map(l => ({label:l, data: serieAlineada(fechasLote, porLote[l], 'CV-NDVI_LOTE')})), 'CV %', 'cvEntre');
+
+  dibujarLinea(document.getElementById('chartRfaEntre'), labelsLote,
+    lotes.map(l => ({label:l, data: serieAlineada(fechasLote, porLote[l], 'RFAa Acum-LOTE')})), 'RFAa acum.', 'rfaEntre');
+
+  // tabla heatmap: últimas 5 fechas
+  const ultimas5 = fechasLote.slice(-5);
+  const tbl = document.getElementById('tableHeat');
+  const thead = `<thead><tr><th>Lote</th>${ultimas5.map(f=>`<th>${fechaCorta(f)}</th>`).join('')}</tr></thead>`;
+  const tbody = '<tbody>' + lotes.map(l=>{
+    const vals = serieAlineada(ultimas5, porLote[l], 'NDVI-LOTE');
+    return `<tr><td>${l}</td>${vals.map(v=> v===null ? '<td>—</td>' : `<td><div class="heat" style="background:${heatColor(v)}; padding:4px 0;">${v.toFixed(2)}</div></td>`).join('')}</tr>`;
+  }).join('') + '</tbody>';
+  tbl.innerHTML = thead + tbody;
+
+  // ---------- VISTA INTRA LOTE (primer lote por defecto) ----------
+  const loteSeleccionado = lotes[0];
+  renderIntra(rows, loteSeleccionado);
+
+  // radios del selector de lote intra
+  const intraBlock = document.getElementById('lote-block-intra');
+  const h4 = intraBlock.querySelector('h4');
+  intraBlock.innerHTML = '';
+  intraBlock.appendChild(h4 || Object.assign(document.createElement('h4'), {textContent:'Lote'}));
+  lotes.forEach((l,i)=>{
+    const row = document.createElement('label');
+    row.className = 'check-row';
+    row.innerHTML = `<input type="radio" name="loteintra" ${i===0?'checked':''}>${l}`;
+    row.querySelector('input').addEventListener('change', ()=> renderIntra(rows, l));
+    intraBlock.appendChild(row);
+  });
+}
+
+function renderIntra(rows, lote){
+  const filasLote = rows.filter(r => r['LOTE'] === lote);
+  const porAmbiente = agrupar(filasLote, 'AMBIENTE');
+  const ambientes = Object.keys(porAmbiente);
+  const fechas = fechasUnicas(filasLote);
+  const labels = fechas.map(fechaCorta);
+
+  dibujarLinea(document.getElementById('chartNdviIntra'), labels,
+    ambientes.map(a => ({label:a, data: serieAlineada(fechas, porAmbiente[a], 'NDVI')})), 'NDVI', 'ndviIntra');
+
+  dibujarLinea(document.getElementById('chartCvIntra'), labels,
+    ambientes.map(a => ({label:a, data: serieAlineada(fechas, porAmbiente[a], 'CV-NDVI')})), 'CV %', 'cvIntra');
+
+  dibujarLinea(document.getElementById('chartRfaIntra'), labels,
+    ambientes.map(a => ({label:a, data: serieAlineada(fechas, porAmbiente[a], 'RFAa Acumulada')})), 'RFAa acum.', 'rfaIntra');
+
+  const totales = ambientes.map(a=>{
+    const vals = porAmbiente[a].map(r=> Number(r['RFAa Acumulada'])).filter(v=>!isNaN(v));
+    return vals.length ? vals[vals.length-1] : 0;
+  });
+  const max = Math.max(...totales, 1);
+
+  if (charts.barIntra) charts.barIntra.destroy();
+  charts.barIntra = new Chart(document.getElementById('chartBarIntra'), {
+    type:'bar',
+    data:{ labels: ambientes, datasets:[{
+      label:'RFAa relativo', data: totales.map(t=> Math.round((t/max)*100)),
+      backgroundColor: palette[0], borderRadius:5, maxBarThickness:34
+    }]},
+    options:{
+      plugins:{legend:{display:false}},
+      scales:{ y:{max:100, ticks:{callback:v=>v+'%'}, grid:{color:"#EFEDE3"}}, x:{grid:{display:false}} }
+    }
+  });
+}
+
+function showView(v){
+  document.getElementById('view-entre').style.display = v==='entre' ? 'grid' : 'none';
+  document.getElementById('view-intra').style.display = v==='intra' ? 'grid' : 'none';
+  document.getElementById('lote-block-entre').style.display = v==='entre' ? 'block' : 'none';
+  document.getElementById('lote-block-intra').style.display = v==='intra' ? 'block' : 'none';
+  document.getElementById('tab-entre').classList.toggle('active', v==='entre');
+  document.getElementById('tab-intra').classList.toggle('active', v==='intra');
+}
+
+cargarDatos();
+</script>
+</body>
+</html>
