@@ -275,12 +275,16 @@
 <footer class="note" id="footerNote">Conectando con el backend de Google Apps Script…</footer>
 
 <script>
-Chart.defaults.font.family = "'Space Grotesk', sans-serif";
-Chart.defaults.font.size = 11;
-Chart.defaults.color = "#5B6A5D";
-
 // ⚠️ Pegá acá la URL de tu implementación de Apps Script (termina en /exec)
 const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxN0MaZFdHdmqYr9ZSlAk8bMnEMc9RlvpzQSCUTHhnBlWxpsRCNx-aTKPfz17sOlds1hQ/exec";
+
+if (typeof Chart !== 'undefined'){
+  Chart.defaults.font.family = "'Space Grotesk', sans-serif";
+  Chart.defaults.font.size = 11;
+  Chart.defaults.color = "#5B6A5D";
+} else {
+  console.error('Chart.js no se cargó — los gráficos no van a poder dibujarse, pero el login funciona igual.');
+}
 
 const palette = ["#6E9B5E","#D9A441","#23402A","#C97A4A","#3E8483","#8A5A6B","#7D8C6A","#B08968"];
 const charts = {}; // guarda instancias para poder destruir/redibujar
@@ -417,6 +421,7 @@ function serieAlineada(fechas, filasLote, campo){
 }
 
 function dibujarLinea(ctx, labels, series, yTitle, key){
+  if (typeof Chart === 'undefined') return;
   if (charts[key]) charts[key].destroy();
   charts[key] = new Chart(ctx, {
     type:'line',
@@ -525,6 +530,7 @@ function renderIntra(rows, lote){
   });
   const max = Math.max(...totales, 1);
 
+  if (typeof Chart === 'undefined') return;
   if (charts.barIntra) charts.barIntra.destroy();
   charts.barIntra = new Chart(document.getElementById('chartBarIntra'), {
     type:'bar',
