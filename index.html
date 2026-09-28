@@ -1353,7 +1353,11 @@ const COLUMNAS_LOTE_PONDERADAS = ['NDVI-LOTE', 'CV-NDVI_LOTE', 'RFAa Acum-LOTE',
 function componerLote(rows){
   const vistos = new Set();
   const dedup = rows.filter(r=>{
-    const key = [r['LOTE'], r['CAMPAÑA'], r['FECHA'], r['AMBIENTE'], r['FACTOR_POND'],
+    // ESTABLECIMIENTO va en la clave de dedup/agrupación: sin esto, dos
+    // establecimientos con un lote del mismo nombre (ej. "Lote 3" en dos
+    // campos distintos) terminarían sumando sus fracciones ponderadas
+    // entre sí, como si fueran ambientes de un mismo lote.
+    const key = [r['ESTABLECIMIENTO'], r['LOTE'], r['CAMPAÑA'], r['FECHA'], r['AMBIENTE'], r['FACTOR_POND'],
                  ...COLUMNAS_LOTE_PONDERADAS.map(c=>r[c])].join('|');
     if (vistos.has(key)) return false;
     vistos.add(key);
@@ -1362,7 +1366,7 @@ function componerLote(rows){
 
   const grupos = {};
   dedup.forEach(r=>{
-    const key = [r['LOTE'], r['CAMPAÑA'], r['FECHA']].join('|');
+    const key = [r['ESTABLECIMIENTO'], r['LOTE'], r['CAMPAÑA'], r['FECHA']].join('|');
     if (!grupos[key]) {
       grupos[key] = { base: r, sumaPond: 0, sumas: Object.fromEntries(COLUMNAS_LOTE_PONDERADAS.map(c=>[c,0])) };
     }
@@ -1380,6 +1384,44 @@ function componerLote(rows){
     COLUMNAS_LOTE_PONDERADAS.forEach(c=>{ fila[c] = g.sumas[c] / factor; });
     return fila;
   });
+}
+
+/** Clave única de un LOTE dentro de un ESTABLECIMIENTO. Se usa en vez del
+    nombre de LOTE solo en todos lados donde antes se agrupaba/filtraba por
+    LOTE — dos establecimientos pueden tener un lote con el mismo nombre
+    (ej. "Lote 3"), y sin esta clave compuesta terminarían mezclándose. */
+function claveEstLote(r){
+  return `${normStr(r['ESTABLECIMIENTO'])}\u0001${normStr(r['LOTE'])}`;
+}
+
+/** Agrupa filas por LOTE usando ESTABLECIMIENTO+LOTE como clave real (ver
+    claveEstLote). Devuelve los grupos indexados por esa clave compuesta, y
+    un diccionario de etiquetas para mostrar en pantalla: el nombre de LOTE
+    solo, salvo que dentro del mismo conjunto haya otro establecimiento con
+    un lote de igual nombre — ahí se aclara entre paréntesis para que no
+    parezcan dos filas duplicadas por error. */
+function agruparPorLoteYEstablecimiento(rows){
+  const grupos = {};
+  rows.forEach(r=>{
+    const clave = claveEstLote(r);
+    if (!grupos[clave]) grupos[clave] = [];
+    grupos[clave].push(r);
+  });
+  Object.values(grupos).forEach(arr => arr.sort((a,b)=> new Date(a['FECHA']) - new Date(b['FECHA'])));
+
+  const nombreCount = {};
+  Object.values(grupos).forEach(arr=>{
+    const nombre = arr[0]['LOTE'];
+    nombreCount[nombre] = (nombreCount[nombre]||0) + 1;
+  });
+  const etiquetas = {};
+  Object.keys(grupos).forEach(clave=>{
+    const fila = grupos[clave][0];
+    etiquetas[clave] = nombreCount[fila['LOTE']] > 1
+      ? `${fila['LOTE']} (${fila['ESTABLECIMIENTO']})`
+      : fila['LOTE'];
+  });
+  return { grupos, etiquetas };
 }
 
 function fechasUnicas(rows){
@@ -1481,10 +1523,15 @@ function extenderEjeConPredicciones(fechasBaseISO, nivel, variable, seriesReales
   const extras = new Set();
   seriesReales.forEach(s=>{
     if (!s.filas.length) return;
+    const primerRow = s.filas[0];
     predicciones
-      .filter(p => p.NIVEL===nivel && p.VARIABLE===variable &&
-        String(p.LOTE)===String(s.filas[0]['LOTE']) &&
-        (nivel==='LOTE' || String(p.AMBIENTE)===String(s.filas[0]['AMBIENTE'])))
+      .filter(p => {
+        if (p.NIVEL!==nivel || p.VARIABLE!==variable) return false;
+        if (String(p.LOTE)!==String(primerRow['LOTE'])) return false;
+        if (p.ESTABLECIMIENTO !== undefined && String(p.ESTABLECIMIENTO) !== String(primerRow['ESTABLECIMIENTO'])) return false;
+        if (nivel!=='LOTE' && String(p.AMBIENTE)!==String(primerRow['AMBIENTE'])) return false;
+        return true;
+      })
       .forEach(p => extras.add(p.FECHA_PROYECTADA));
   });
   return Array.from(new Set([...fechasBaseISO, ...extras])).sort((a,b)=> new Date(a)-new Date(b));
@@ -1525,11 +1572,18 @@ function datasetsReferenciaYPrediccion(nivel, variable, seriesReales, fechasEjeI
 
   seriesReales.forEach(s=>{
     if (!s.filas.length) return;
-    const preds = predicciones.filter(p =>
-      p.NIVEL===nivel && p.VARIABLE===variable &&
-      String(p.LOTE)===String(s.filas[0]['LOTE']) &&
-      (nivel==='LOTE' || String(p.AMBIENTE)===String(s.filas[0]['AMBIENTE']))
-    );
+    const primerRowPred = s.filas[0];
+    const preds = predicciones.filter(p => {
+      if (p.NIVEL!==nivel || p.VARIABLE!==variable) return false;
+      if (String(p.LOTE)!==String(primerRowPred['LOTE'])) return false;
+      // Si la predicción ya trae ESTABLECIMIENTO (notebook actualizado),
+      // exigimos que coincida — evita mezclar el lote con uno homónimo de
+      // otro establecimiento. Si todavía no lo trae (notebook viejo), se
+      // mantiene el comportamiento anterior por LOTE solo.
+      if (p.ESTABLECIMIENTO !== undefined && String(p.ESTABLECIMIENTO) !== String(primerRowPred['ESTABLECIMIENTO'])) return false;
+      if (nivel!=='LOTE' && String(p.AMBIENTE)!==String(primerRowPred['AMBIENTE'])) return false;
+      return true;
+    });
     if (!preds.length) return;
 
     const ultimaFechaReal = s.filas[s.filas.length-1]['FECHA'];
@@ -1583,7 +1637,7 @@ function aplicarUltimos120(vista){
   }
 }
 
-function pintarChecklist(containerId, valores, selectedSet, onChange, conDot, soloUno){
+function pintarChecklist(containerId, valores, selectedSet, onChange, conDot, soloUno, etiquetas){
   const el = document.getElementById(containerId);
   if (!el) return;
   el.innerHTML = '';
@@ -1591,7 +1645,8 @@ function pintarChecklist(containerId, valores, selectedSet, onChange, conDot, so
     const row = document.createElement('label');
     row.className = 'check-row';
     const dot = conDot ? `<span class="dot" style="background:${palette[i%palette.length]}"></span>` : '';
-    row.innerHTML = `<input type="checkbox" ${selectedSet.has(v) ? 'checked':''}>${dot}${v}`;
+    const texto = etiquetas ? (etiquetas[v] ?? v) : v;
+    row.innerHTML = `<input type="checkbox" ${selectedSet.has(v) ? 'checked':''}>${dot}${texto}`;
     row.querySelector('input').addEventListener('change', ev=>{
       if (soloUno){
         el.querySelectorAll('input[type=checkbox]').forEach(inp=>{ inp.checked = false; });
@@ -1692,9 +1747,14 @@ function actualizarEstablecimientoEntre(){
 
 function actualizarLotesEntre(baseCampanaCultivo){
   const baseFiltrada = baseCampanaCultivo.filter(r => filtersEntre.establecimiento === 'TODOS' || String(r['ESTABLECIMIENTO']) === filtersEntre.establecimiento);
-  const lotes = uniqueSorted(baseFiltrada, 'LOTE');
-  filtersEntre.lotes = new Set(lotes);
-  pintarChecklist('checkLoteEntre', lotes, filtersEntre.lotes, onFiltroEntreCambio, true, false);
+  // Clave compuesta Establecimiento+Lote: si "Todos" los establecimientos
+  // está seleccionado y dos de ellos tienen un lote homónimo, cada uno
+  // aparece como su propio checkbox (con el establecimiento aclarado),
+  // en vez de mezclarse en uno solo.
+  const { grupos, etiquetas } = agruparPorLoteYEstablecimiento(baseFiltrada);
+  const claves = Object.keys(grupos).sort((a,b)=> etiquetas[a].localeCompare(etiquetas[b], 'es'));
+  filtersEntre.lotes = new Set(claves);
+  pintarChecklist('checkLoteEntre', claves, filtersEntre.lotes, onFiltroEntreCambio, true, false, etiquetas);
   onFiltroEntreCambio();
 }
 
@@ -1704,7 +1764,7 @@ function filtrarRowsEntre(){
     if (filtersEntre.establecimiento !== 'TODOS' && String(r['ESTABLECIMIENTO']) !== filtersEntre.establecimiento) return false;
     if (filtersEntre.desde && new Date(r['FECHA']) < new Date(filtersEntre.desde)) return false;
     if (filtersEntre.hasta && new Date(r['FECHA']) > new Date(filtersEntre.hasta)) return false;
-    if (!filtersEntre.lotes.has(String(r['LOTE']))) return false;
+    if (!filtersEntre.lotes.has(claveEstLote(r))) return false;
     if (!filtersEntre.cultivos.has(String(r['CULTIVO']))) return false;
     return true;
   });
@@ -1724,8 +1784,11 @@ function renderEntre(rows){
   }
 
   const filasCompuestas = componerLote(rows);
-  const porLote = agrupar(filasCompuestas, 'LOTE');
-  const lotes = Object.keys(porLote).sort((a,b)=> a.localeCompare(b,'es'));
+  // Se agrupa por ESTABLECIMIENTO+LOTE (no solo LOTE): si "Todos" los
+  // establecimientos está seleccionado y dos tienen un lote homónimo, cada
+  // uno queda como su propia serie en vez de mezclarse en una sola.
+  const { grupos: porLote, etiquetas: etiquetaLote } = agruparPorLoteYEstablecimiento(filasCompuestas);
+  const lotes = Object.keys(porLote).sort((a,b)=> etiquetaLote[a].localeCompare(etiquetaLote[b],'es'));
   const fechas = fechasUnicas(rows);
   const labels = fechas.map(fechaCorta);
 
@@ -1740,13 +1803,13 @@ function renderEntre(rows){
   const fechasNdvi = mostrarRefNdvi ? extenderEjeConPredicciones(fechas, 'LOTE', 'NDVI', seriesLote) : fechas;
   const labelsNdvi = fechasNdvi.map(fechaCorta);
   const datasetsNdvi = lotes.map((l,i) => ({
-    label:l, data: serieAlineada(fechasNdvi, porLote[l], 'NDVI-LOTE'), borderColor: palette[i%palette.length]
+    label:etiquetaLote[l], data: serieAlineada(fechasNdvi, porLote[l], 'NDVI-LOTE'), borderColor: palette[i%palette.length]
   }));
   if (mostrarRefNdvi) datasetsNdvi.push(...datasetsReferenciaYPrediccion('LOTE','NDVI', seriesLote, fechasNdvi));
   dibujarLinea(document.getElementById('chartNdviEntre'), labelsNdvi, datasetsNdvi, 'NDVI', 'ndviEntre');
 
   dibujarLinea(document.getElementById('chartCvEntre'), labels,
-    lotes.map(l => ({label:l, data: serieAlineada(fechas, porLote[l], 'CV-NDVI_LOTE')})), 'CV %', 'cvEntre');
+    lotes.map(l => ({label:etiquetaLote[l], data: serieAlineada(fechas, porLote[l], 'CV-NDVI_LOTE')})), 'CV %', 'cvEntre');
 
   const seriesLoteRfa = lotes.map((l,i) => ({
     id: l, filas: porLote[l], color: palette[i%palette.length], campoValor: 'RFAa Acum-LOTE'
@@ -1755,7 +1818,7 @@ function renderEntre(rows){
   const fechasRfa = mostrarRefRfa ? extenderEjeConPredicciones(fechas, 'LOTE', 'RFA', seriesLoteRfa) : fechas;
   const labelsRfa = fechasRfa.map(fechaCorta);
   const datasetsRfa = lotes.map((l,i) => ({
-    label:l, data: serieAlineada(fechasRfa, porLote[l], 'RFAa Acum-LOTE'), borderColor: palette[i%palette.length]
+    label:etiquetaLote[l], data: serieAlineada(fechasRfa, porLote[l], 'RFAa Acum-LOTE'), borderColor: palette[i%palette.length]
   }));
   if (mostrarRefRfa) datasetsRfa.push(...datasetsReferenciaYPrediccion('LOTE','RFA', seriesLoteRfa, fechasRfa));
   dibujarLinea(document.getElementById('chartRfaEntre'), labelsRfa, datasetsRfa, 'RFAa acum.', 'rfaEntre');
@@ -1765,7 +1828,7 @@ function renderEntre(rows){
     const vals = serieAlineada(fechas, porLote[l], 'RFAa Acum-LOTE');
     let ultimo = null;
     for (let i = vals.length - 1; i >= 0; i--){ if (vals[i] !== null){ ultimo = vals[i]; break; } }
-    return { lote: l, valor: ultimo ?? 0 };
+    return { lote: l, etiqueta: etiquetaLote[l], valor: ultimo ?? 0 };
   }).sort((a,b) => b.valor - a.valor);
   const maxRfaEntre = Math.max(...rfaPorLote.map(r=>r.valor), 1);
 
@@ -1774,7 +1837,7 @@ function renderEntre(rows){
     charts.rfaRelativoEntre = new Chart(document.getElementById('chartRfaRelativoEntre'), {
       type:'bar',
       data:{
-        labels: rfaPorLote.map(r=>r.lote),
+        labels: rfaPorLote.map(r=>r.etiqueta),
         datasets:[{
           label:'RFAa relativo', data: rfaPorLote.map(r=> Math.round((r.valor/maxRfaEntre)*100)),
           backgroundColor: palette[0], borderRadius:5, maxBarThickness:34
@@ -1872,17 +1935,22 @@ function actualizarLoteIntra(baseCampanaCultivo){
     filtersIntra.cultivos.has(String(r['CULTIVO']))
   );
   const base = baseCC.filter(r => filtersIntra.establecimiento === 'TODOS' || String(r['ESTABLECIMIENTO']) === filtersIntra.establecimiento);
-  const lotes = uniqueSorted(base, 'LOTE');
-  if (!filtersIntra.lote || !lotes.includes(filtersIntra.lote)) filtersIntra.lote = lotes[0] || null;
+  // filtersIntra.lote pasa a ser la clave compuesta Establecimiento+Lote
+  // (claveEstLote), no el nombre de lote solo — así, si "Todos" los
+  // establecimientos está seleccionado y dos comparten un nombre de lote,
+  // elegir uno no arrastra datos del otro.
+  const { grupos, etiquetas } = agruparPorLoteYEstablecimiento(base);
+  const claves = Object.keys(grupos).sort((a,b)=> etiquetas[a].localeCompare(etiquetas[b], 'es'));
+  if (!filtersIntra.lote || !claves.includes(filtersIntra.lote)) filtersIntra.lote = claves[0] || null;
 
   const el = document.getElementById('radioLoteIntra');
   el.innerHTML = '';
-  lotes.forEach(l=>{
+  claves.forEach(clave=>{
     const row = document.createElement('label');
     row.className = 'check-row';
-    row.innerHTML = `<input type="radio" name="loteIntraRadio" ${filtersIntra.lote===l ? 'checked':''}>${l}`;
+    row.innerHTML = `<input type="radio" name="loteIntraRadio" ${filtersIntra.lote===clave ? 'checked':''}>${etiquetas[clave]}`;
     row.querySelector('input').addEventListener('change', ()=>{
-      filtersIntra.lote = l;
+      filtersIntra.lote = clave;
       actualizarAmbienteIntra();
     });
     el.appendChild(row);
@@ -1892,8 +1960,7 @@ function actualizarLoteIntra(baseCampanaCultivo){
 
 function actualizarAmbienteIntra(){
   const rowsLote = allRows.filter(r =>
-    String(r['LOTE']) === filtersIntra.lote &&
-    (filtersIntra.establecimiento === 'TODOS' || String(r['ESTABLECIMIENTO']) === filtersIntra.establecimiento) &&
+    claveEstLote(r) === filtersIntra.lote &&
     (filtersIntra.campana === 'TODAS' || String(r['CAMPAÑA']) === filtersIntra.campana)
   );
   const ambientes = uniqueSorted(rowsLote, 'AMBIENTE');
@@ -1904,9 +1971,8 @@ function actualizarAmbienteIntra(){
 
 function filtrarRowsIntra(){
   return allRows.filter(r=>{
-    if (!filtersIntra.lote || String(r['LOTE']) !== filtersIntra.lote) return false;
+    if (!filtersIntra.lote || claveEstLote(r) !== filtersIntra.lote) return false;
     if (filtersIntra.campana !== 'TODAS' && String(r['CAMPAÑA']) !== filtersIntra.campana) return false;
-    if (filtersIntra.establecimiento !== 'TODOS' && String(r['ESTABLECIMIENTO']) !== filtersIntra.establecimiento) return false;
     if (filtersIntra.desde && new Date(r['FECHA']) < new Date(filtersIntra.desde)) return false;
     if (filtersIntra.hasta && new Date(r['FECHA']) > new Date(filtersIntra.hasta)) return false;
     if (!filtersIntra.ambientes.has(String(r['AMBIENTE']))) return false;
@@ -1936,8 +2002,13 @@ function renderIntra(rows){
 
   const campanasEnVista = uniqueSorted(rows, 'CAMPAÑA');
   const campanaTxt = campanasEnVista.length === 1 ? campanasEnVista[0] : `${campanasEnVista.length} campañas`;
-  document.getElementById('metaNdviIntra').textContent =
-    `LOTE: ${filtersIntra.lote || '—'} · CAMPAÑA: ${campanaTxt} · ${ambientes.length} ambiente(s)`;
+  // filtersIntra.lote es la clave compuesta Establecimiento\u0001Lote — se
+  // muestra el nombre de lote y su establecimiento (siempre, no solo si hay
+  // ambigüedad, porque acá es información útil de por sí).
+  const [estIntraTxt, loteIntraTxt] = filtersIntra.lote ? filtersIntra.lote.split('\u0001') : ['', ''];
+  document.getElementById('metaNdviIntra').textContent = filtersIntra.lote
+    ? `LOTE: ${loteIntraTxt} (${estIntraTxt}) · CAMPAÑA: ${campanaTxt} · ${ambientes.length} ambiente(s)`
+    : `LOTE: — · CAMPAÑA: ${campanaTxt} · ${ambientes.length} ambiente(s)`;
 
   const seriesAmbiente = ambientes.map((a,i) => ({
     id:a, filas:porAmbiente[a], color: palette[i%palette.length], campoValor:'NDVI'
@@ -2077,14 +2148,19 @@ function calcularEntradasMapa(vista){
   if (vista === 'entre'){
     const rowsFiltradas = filtrarRowsEntre();
     const compuestas = componerLote(rowsFiltradas);
-    const porLote = agrupar(compuestas, 'LOTE');
+    // Agrupado por Establecimiento+Lote (no solo Lote) para no confundir
+    // lotes homónimos de distintos establecimientos al pintar el mapa.
+    const { grupos: porLote, etiquetas: etiquetaLote } = agruparPorLoteYEstablecimiento(compuestas);
     const todasFechas = fechasUnicas(compuestas);
     poblarSelectorFechaMapa('entre', todasFechas);
     const fechaElegida = document.getElementById('fechaPoligonoEntre').value;
     Object.keys(porLote).forEach(l=>{
       const filas = porLote[l];
       const fila = filas.find(f=>f['FECHA']===fechaElegida) || filas[filas.length-1];
-      entradas.push({ lote: l, ambiente: '', valor: Number(fila['NDVI-LOTE']) });
+      entradas.push({
+        lote: fila['LOTE'], establecimiento: fila['ESTABLECIMIENTO'], ambiente: '',
+        etiqueta: etiquetaLote[l], valor: Number(fila['NDVI-LOTE'])
+      });
     });
   } else {
     const rowsFiltradas = filtrarRowsIntra();
@@ -2095,7 +2171,10 @@ function calcularEntradasMapa(vista){
     Object.keys(porAmbiente).forEach(a=>{
       const filas = porAmbiente[a];
       const fila = filas.find(f=>f['FECHA']===fechaElegida) || filas[filas.length-1];
-      entradas.push({ lote: filtersIntra.lote, ambiente: a, valor: Number(fila['NDVI']) });
+      entradas.push({
+        lote: fila['LOTE'], establecimiento: fila['ESTABLECIMIENTO'], ambiente: a,
+        etiqueta: a, valor: Number(fila['NDVI'])
+      });
     });
   }
   return entradas;
@@ -2107,19 +2186,22 @@ function normStr(v){ return String(v==null?'':v).trim(); }
     actualmente visibles según los filtros, junto con su valor de NDVI, y
     la lista de lotes/ambientes para los que NO se encontró geometría (o la
     geometría vino con error de formato) — para poder avisarlo en pantalla
-    en vez de que el polígono simplemente desaparezca sin explicación. */
+    en vez de que el polígono simplemente desaparezca sin explicación.
+    Se cruza por LOTE + ESTABLECIMIENTO (no solo LOTE) para no traer el
+    polígono de un lote homónimo de otro establecimiento. */
 function geometriasVisibles(vista){
   const entradas = calcularEntradasMapa(vista);
   const lista = [];
   const faltantes = [];
-  entradas.forEach(({lote, ambiente, valor})=>{
+  entradas.forEach(({lote, establecimiento, ambiente, etiqueta, valor})=>{
     const geoms = geometrias.filter(g =>
       normStr(g['LOTE']) === normStr(lote) &&
+      normStr(g['ESTABLECIMIENTO']) === normStr(establecimiento) &&
       (vista==='intra' ? normStr(g['AMBIENTE'])===normStr(ambiente) : true)
     );
     if (!geoms.length){
-      faltantes.push({ lote, ambiente });
-      console.warn(`[mapa] Sin geometría cargada para ${lote}${ambiente?' · '+ambiente:''} (vista ${vista})`);
+      faltantes.push({ lote: etiqueta || lote, ambiente: vista==='intra' ? ambiente : '' });
+      console.warn(`[mapa] Sin geometría cargada para ${lote} (${establecimiento})${ambiente?' · '+ambiente:''} (vista ${vista})`);
       return;
     }
     let huboError = false;
@@ -2127,12 +2209,12 @@ function geometriasVisibles(vista){
       let geojson;
       try { geojson = JSON.parse(g['GEOJSON']); } catch(e){
         huboError = true;
-        console.warn(`[mapa] GEOJSON inválido o truncado para ${lote}${ambiente?' · '+ambiente:''}:`, e.message);
+        console.warn(`[mapa] GEOJSON inválido o truncado para ${lote} (${establecimiento})${ambiente?' · '+ambiente:''}:`, e.message);
         return;
       }
-      lista.push({ lote, ambiente, valor, geojson });
+      lista.push({ lote, establecimiento, ambiente, valor, geojson });
     });
-    if (huboError) faltantes.push({ lote, ambiente });
+    if (huboError) faltantes.push({ lote: etiqueta || lote, ambiente: vista==='intra' ? ambiente : '' });
   });
   return { lista, faltantes };
 }
@@ -2368,17 +2450,12 @@ const calendario = {
 
 function bboxDeLotesVisibles(vista){
   // arma un bbox [minLon,minLat,maxLon,maxLat] a partir de las geometrías
-  // de los lotes/ambientes actualmente mostrados en esta vista
-  let lotes = [];
-  if (vista === 'entre'){
-    lotes = Array.from(filtersEntre.lotes);
-  } else if (filtersIntra.lote){
-    lotes = [filtersIntra.lote];
-  }
+  // de los lotes/ambientes actualmente mostrados en esta vista. Reutiliza
+  // geometriasVisibles(), que ya cruza por LOTE+ESTABLECIMIENTO (no solo
+  // LOTE), para no traer el bbox de un lote homónimo de otro establecimiento.
+  const { lista } = geometriasVisibles(vista);
   let minLon=Infinity, minLat=Infinity, maxLon=-Infinity, maxLat=-Infinity;
-  geometrias.filter(g=> lotes.includes(String(g['LOTE']))).forEach(g=>{
-    let geojson;
-    try { geojson = JSON.parse(g['GEOJSON']); } catch(e){ return; }
+  lista.forEach(({geojson})=>{
     const coordsAplanadas = JSON.stringify(geojson.coordinates).match(/-?\d+\.\d+/g)?.map(Number) || [];
     for (let i=0;i<coordsAplanadas.length;i+=2){
       const lon = coordsAplanadas[i], lat = coordsAplanadas[i+1];
